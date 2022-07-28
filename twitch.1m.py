@@ -3,14 +3,12 @@
 # <xbar.title>Twitch Followers</xbar.title>
 # <xbar.version>v1.0</xbar.version>
 # <xbar.author>BruhJerem</xbar.author>
-# <xbar.author.github>BruhJerem</xbar.author.github>
-# <xbar.desc>Shows your followed streamers from Twitch when they are online.</xbar.desc>
-# <xbar.dependencies>python</xbar.dependencies>
 
 # <xbar.var>string(TWITCH_API_CLIENT=""): API Twitch Key</xbar.var>
 # <xbar.var>string(TWITCH_SECRET=""): Secret Twitch API Key</xbar.var>
 # <xbar.var>string(TWITCH_USERNAME=""): Twitch Username</xbar.var>
-# <xbar.var>boolean(ONLY_FAVOURITE_STREAMER="false"): Only shows and notify when your favourite streamers are online. To set your favourite streamer, you have to put the twitch username in the FAVOUTITE_STREAMER array.</xbar.var>
+# <xbar.var>boolean(ONLY_FAVOURITE_STREAMER="false"): Only shows and notify when your favourite streamers are online. To set your favourite streamer, you have to put the twitch username in the FAVOUTITE_STREAMERS array.</xbar.var>
+# <xbar.var>string(FAVOURITE_STREAMERS=""): Comma separated favourite streamers to show if ONLY_FAVOURITE_STREAMER is True (+notifications)</xbar.var>
 
 import os
 import json
@@ -305,9 +303,6 @@ TWITCH_ICON_36_RETINA = ''.join([
   "Q9v2X8n9CNCvXptAn9XHaRrsA69Khpy1laMjYT/PPwcA7IpMXaKcVm4AAAAASUVORK5CYII="
 ])
 
-# Favourite streamers to get notifications and to display if ONLY_FAVOURITE_STREAMER is true.
-FAVOUTITE_STREAMER = []
-
 def send_notification(message, title):
     """Send notification to mac."""
     # TODO: Make it clickable, maybe there is a better way.
@@ -320,6 +315,7 @@ class Twitch:
         self.client_id = os.getenv('TWITCH_API_CLIENT')
         self.client_secret = os.getenv('TWITCH_SECRET')
         self.only_favourite = True if os.getenv('ONLY_FAVOURITE_STREAMER') == 'true' else False
+        self.favourite_streamers = os.getenv('FAVOURITE_STREAMERS') and os.getenv('FAVOURITE_STREAMERS').split(",") or []
 
         self.access_token = self.fetch_access_token()
         self.user = self.fetch_user()
@@ -327,10 +323,11 @@ class Twitch:
         self.channels = self.fetch_channels_follower()
         self.online_channels_count = len(self.channels)
         self.favourite_channels = self.get_online_fav_streamer()
-        self.grouped_channel = self.groupe_channel()
+        self.grouped_channel = self.group_channel()
 
-    def fetch(self, req):
+    def fetch(self, url):
         """Fetch function from Request param."""
+        req = Request("{}{}".format(self.base_url, url))
         req.add_header('Authorization', "Bearer {}".format(self.access_token))
         req.add_header('Client-Id', self.client_id)
         body = urlopen(req).read()
@@ -344,20 +341,20 @@ class Twitch:
 
     def fetch_user(self):
         """Get current twitch user informations."""
-        return self.fetch(Request("{}/users?login={}".format(self.base_url, self.username))).get('data')[0]
+        return self.fetch("/users?login={}".format(self.username)).get('data')[0]
 
     def fetch_all_follower(self):
         """Get all followers of current twitch user."""
-        return self.fetch(Request("{}/users/follows?from_id={}&first=100".format(self.base_url, self.user.get('id')))).get('data')
+        return self.fetch("/users/follows?from_id={}&first=100".format(self.user.get('id'))).get('data')
 
     def fetch_channels_follower(self):
         """Get all followers channels of current twitch user."""
         follower_ids = []
         for streamer in self.all_follower:
             follower_ids.append('user_id={}'.format(streamer.get("to_id")))
-        return self.fetch(Request("{}/streams?{}&first=100".format(self.base_url, '&'.join(follower_ids)))).get('data')
+        return self.fetch("/streams?{}&first=100".format('&'.join(follower_ids))).get('data')
 
-    def groupe_channel(self):
+    def group_channel(self):
         """Group all channels by current game playing by all current followed online streamers."""
         if self.only_favourite:
             channels = self.favourite_channels
@@ -373,8 +370,12 @@ class Twitch:
 
     def get_online_fav_streamer(self):
         """Add current favourite online streamer in tmp file."""
-        TEMP_FILE = 'tmp/livestreamer-now-playing.txt';
+        TEMP_DIR = "tmp"
+        TEMP_FILE = '{}/livestreamer-now-playing.txt'.format(TEMP_DIR);
         favs = []
+        path_tmp_dir = Path(__file__).parent.joinpath(TEMP_DIR)
+        if not os.path.exists(path_tmp_dir):
+            os.mkdir(path_tmp_dir)
         with open(Path(__file__).parent.joinpath(TEMP_FILE), 'a+') as file:
             file.seek(0)
             lines = file.readlines()
@@ -384,9 +385,9 @@ class Twitch:
             new_file_towrite = []
             for channel in self.channels:
                 user = channel.get('user_login')
-                if user in FAVOUTITE_STREAMER:
+                if user in self.favourite_streamers:
                     if not user in new_lines:
-                        send_notification('{} est live !'.format(channel.get('user_name')), "Twitch")
+                        send_notification('{} is live !'.format(channel.get('user_name')), "Twitch")
                     new_file_towrite.append(user)
                     favs.append(channel)
             file.close()
@@ -400,14 +401,17 @@ class Twitch:
 twitch = Twitch()
 count = twitch.online_channels_count if not twitch.only_favourite else len(twitch.favourite_channels)
 
-print("{} | image={}".format(count, TWITCH_ICON_36_RETINA))
+print("{} | color=white image={}".format(count, TWITCH_ICON_36_RETINA))
 print("---")
 
-for category in twitch.grouped_channel.keys():
-    print(category)
-    for streamer in twitch.grouped_channel[category]:
-        streamer_username = streamer.get('user_name')
-        print("{} | href='https://www.twitch.tv/{}'".format(streamer_username, streamer_username))
-        print("-- Live | href='https://www.twitch.tv/{}'".format(streamer_username))
-        print("-- Chat | href='https://www.twitch.tv/popout/{}/chat?popout='".format(streamer.get('user_login')))
-    print("---")
+if count == 0:
+    print("Twitch | href='https://www.twitch.tv/directory/following'")
+else:
+    for category in twitch.grouped_channel.keys():
+        print(category)
+        for streamer in twitch.grouped_channel[category]:
+            streamer_username = streamer.get('user_name')
+            print("{} | href='https://www.twitch.tv/{}'".format(streamer_username, streamer_username))
+            print("-- Live | href='https://www.twitch.tv/{}'".format(streamer_username))
+            print("-- Chat | href='https://www.twitch.tv/popout/{}/chat?popout='".format(streamer.get('user_login')))
+        print("---")
